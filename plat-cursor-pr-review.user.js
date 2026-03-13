@@ -49,8 +49,6 @@
                 border-color: var(--button-default-borderColor-rest, var(--color-btn-border));
                 border-radius: var(--borderRadius-medium, .375rem);
                 color: var(--button-default-fgColor-rest, var(--color-btn-text));
-                background-color: var(--button-default-bgColor-rest);
-                box-shadow: var(--button-default-shadow-resting);
                 cursor: pointer;
                 font-family: inherit;
                 font-size: var(--text-body-size-medium, .875rem);
@@ -63,7 +61,8 @@
                 text-align: center;
                 -webkit-user-select: none;
                 user-select: none;
-                background-color: #0000;
+                background-color: var(--button-default-bgColor-rest);
+                box-shadow: var(--button-default-shadow-resting);
                 justify-content: space-between;
                 -webkit-text-decoration: none;
                 text-decoration: none;
