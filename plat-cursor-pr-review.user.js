@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Plat Cursor PR Review
 // @namespace    https://github.com/gorban
-// @version      0.1.0
+// @version      0.1.1
 // @description  Adds a "Cursor Review" button to GitHub PRs that triggers a Slack workflow
 // @author       gorban
 // @match        https://github.com/*/*/pull/*
@@ -40,27 +40,72 @@
     }
 
     function createButton() {
+        var classId = '_' + crypto.randomUUID().split('-').join('');
+        var style = document.createElement('style');
+        style.innerHTML = `
+            .${classId} {
+                appearance: none;
+                border: var(--borderWidth-thin, .0625rem) solid;
+                border-color: var(--button-default-borderColor-rest, var(--color-btn-border));
+                border-radius: var(--borderRadius-medium, .375rem);
+                color: var(--button-default-fgColor-rest, var(--color-btn-text));
+                background-color: var(--button-default-bgColor-rest);
+                box-shadow: var(--button-default-shadow-resting);
+                cursor: pointer;
+                font-family: inherit;
+                font-size: var(--text-body-size-medium, .875rem);
+                font-weight: var(--base-text-weight-medium, 500);
+                align-items: center;
+                gap: var(--base-size-8, .5rem);
+                height: var(--control-medium-size, 2rem);
+                min-width: max-content;
+                padding: 0 var(--control-medium-paddingInline-normal, .75rem);
+                text-align: center;
+                -webkit-user-select: none;
+                user-select: none;
+                background-color: #0000;
+                justify-content: space-between;
+                -webkit-text-decoration: none;
+                text-decoration: none;
+                transition: color 80ms cubic-bezier(.65, 0, .35,1), fill 80ms cubic-bezier(.65, 0, .35, 1), background-color 80ms cubic-bezier(.65, 0, .35, 1), border-color 80ms cubic-bezier(.65, 0, .35, 1);
+                display: flex;
+            }
+                .${classId}[aria-expanded='true'] {
+                    background-color: var(--button-default-bgColor-active);
+                    border-color: var(--button-default-borderColor-active);
+                }
+
+                .${classId}:hover {
+                    background-color: var(--button-default-bgColor-hover);
+                    border-color: var(--button-default-borderColor-hover);
+                }
+
+                .${classId}:active {
+                    background-color: var(--button-default-bgColor-active);
+                    border-color: var(--button-default-borderColor-active);
+                }
+
+                .${classId}:disabled,
+                .${classId}[aria-disabled='true']:not([data-loading='true']) {
+                    color: var(--control-fgColor-disabled);
+                    background-color: var(--button-default-bgColor-disabled);
+                    border-color: var(--button-default-borderColor-disabled);
+                    box-shadow: none;
+
+                    .${classId}:disabled[data-kbd-chord],
+                    .${classId}[aria-disabled='true'][data-kbd-chord]:not([data-loading='true']) {
+                        background: var(--buttonKeybindingHint-default-bgColor-disabled);
+                        color: var(--buttonKeybindingHint-default-fgColor-disabled);
+                        border-color: var(--buttonKeybindingHint-default-borderColor-disabled);
+                    }
+                }
+        `;
+        document.head.appendChild(style);
+
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.id = BUTTON_ID;
-        Object.assign(btn.style, {
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '8px',
-            padding: '5px 12px',
-            border: '1px solid var(--borderColor-default, rgba(31,35,40,0.15))',
-            borderRadius: '6px',
-            background: 'var(--bgColor-default, #ffffff)',
-            color: 'var(--fgColor-default, #1f2328)',
-            fontFamily:
-                '-apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif',
-            fontSize: '14px',
-            fontWeight: '500',
-            lineHeight: '20px',
-            cursor: 'pointer',
-            whiteSpace: 'nowrap',
-            transition: 'opacity 0.2s',
-        });
+        btn.classList.add(classId);
 
         const img = document.createElement('img');
         img.src = PERRY_IMG_DATA_URI;
