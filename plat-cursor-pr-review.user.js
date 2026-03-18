@@ -195,7 +195,7 @@
         link.href = `https://app.slack.com/client/${ORG_ID}`;
         link.target = '_blank';
         link.rel = 'noopener noreferrer';
-        link.textContent = 'Login to the Slack app here';
+        link.textContent = 'Login to the Slack app through Okta or the link here';
         Object.assign(link.style, {
             color: 'var(--fgColor-accent, #0969da)',
             textDecoration: 'underline',
