@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Plat Cursor PR Review
 // @namespace    https://github.com/gorban
-// @version      0.1.1
+// @version      0.1.2
 // @description  Adds a "Cursor Review" button to GitHub PRs that triggers a Slack workflow
 // @author       gorban
 // @match        https://github.com/*/*/pull/*
@@ -123,7 +123,7 @@
         return btn;
     }
 
-    function showSlackLoginModal() {
+    function showModal(...contentElements) {
         const overlay = document.createElement('div');
         Object.assign(overlay.style, {
             position: 'fixed',
@@ -148,6 +148,31 @@
             boxShadow: '0 8px 24px rgba(0,0,0,0.2)',
         });
 
+        const closeBtn = document.createElement('button');
+        closeBtn.textContent = 'Close';
+        Object.assign(closeBtn.style, {
+            display: 'block',
+            marginLeft: 'auto',
+            padding: '6px 16px',
+            border: '1px solid var(--borderColor-default, rgba(31,35,40,0.15))',
+            borderRadius: '6px',
+            background: 'var(--bgColor-default, #ffffff)',
+            color: 'var(--fgColor-default, #1f2328)',
+            fontSize: '14px',
+            fontWeight: '500',
+            cursor: 'pointer',
+        });
+        closeBtn.addEventListener('click', () => overlay.remove());
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) overlay.remove();
+        });
+
+        dialog.append(...contentElements, closeBtn);
+        overlay.append(dialog);
+        document.body.append(overlay);
+    }
+
+    function showSlackLoginModal() {
         const title = document.createElement('h2');
         title.textContent = 'Unable to get Slack User ID';
         Object.assign(title.style, {
@@ -182,29 +207,66 @@
             'Close this dialog and click the Cursor Review button again';
 
         steps.append(step1, step2);
+        showModal(title, steps);
+    }
 
-        const closeBtn = document.createElement('button');
-        closeBtn.textContent = 'Close';
-        Object.assign(closeBtn.style, {
-            display: 'block',
-            marginLeft: 'auto',
-            padding: '6px 16px',
-            border: '1px solid var(--borderColor-default, rgba(31,35,40,0.15))',
-            borderRadius: '6px',
-            background: 'var(--bgColor-default, #ffffff)',
-            color: 'var(--fgColor-default, #1f2328)',
+    function showErrorModal(btn, statusCode, responseBody) {
+        const title = document.createElement('h2');
+        title.textContent =
+            'Error: Failed to push PR Review request to Slack';
+        Object.assign(title.style, {
+            margin: '0 0 16px',
+            fontSize: '20px',
+            fontWeight: '600',
+            color: 'var(--fgColor-danger, #d1242f)',
+        });
+
+        const statusEl = document.createElement('p');
+        statusEl.textContent = `Status code: ${statusCode}`;
+        Object.assign(statusEl.style, {
+            margin: '0 0 8px',
             fontSize: '14px',
-            fontWeight: '500',
-            cursor: 'pointer',
-        });
-        closeBtn.addEventListener('click', () => overlay.remove());
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) overlay.remove();
         });
 
-        dialog.append(title, steps, closeBtn);
-        overlay.append(dialog);
-        document.body.append(overlay);
+        const bodyLabel = document.createElement('p');
+        bodyLabel.textContent = 'Response body:';
+        Object.assign(bodyLabel.style, {
+            margin: '0 0 4px',
+            fontSize: '14px',
+        });
+
+        const bodyPre = document.createElement('pre');
+        bodyPre.textContent = responseBody || '(empty)';
+        Object.assign(bodyPre.style, {
+            margin: '0 0 16px',
+            padding: '8px',
+            fontSize: '12px',
+            background: 'var(--bgColor-muted, #f6f8fa)',
+            borderRadius: '6px',
+            overflowX: 'auto',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+        });
+
+        const troubleHeader = document.createElement('h3');
+        troubleHeader.textContent = 'Troubleshooting';
+        Object.assign(troubleHeader.style, {
+            margin: '0 0 8px',
+            fontSize: '16px',
+            fontWeight: '700',
+        });
+
+        const troubleText = document.createElement('p');
+        troubleText.textContent =
+            'Check the Slack Workflow for errors. In particular, ensure that the credentials used to connect to the Google Worksheet have not expired.';
+        Object.assign(troubleText.style, {
+            margin: '0 0 20px',
+            fontSize: '14px',
+            lineHeight: '1.6',
+        });
+
+        showModal(title, statusEl, bodyLabel, bodyPre, troubleHeader, troubleText);
+        reenableButton(btn);
     }
 
     function reenableButton(btn) {
@@ -245,8 +307,14 @@
                 RequestedUser: slackUserId,
                 GithubPrLink: prLink,
             }),
-            onload: (res) =>
-                console.log('Cursor PR Review: sent', res.status),
+            onload: (res) => {
+                if (res.status >= 200 && res.status < 300) {
+                    console.log('Cursor PR Review: sent', res.status);
+                } else {
+                    console.error('Cursor PR Review: error', res.status, res.responseText);
+                    showErrorModal(btn, res.status, res.responseText);
+                }
+            },
             onerror: (err) =>
                 console.error('Cursor PR Review: request failed', err),
         });
