@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GitHub SVG Modal
 // @namespace    https://github.com/gorban
-// @version      0.1.1
+// @version      0.1.2
 // @description  Open linked SVGs in a fitted, zoomable modal with branch-aware navigation.
 // @author       gorban
 // @match        https://github.com/*
@@ -77,6 +77,36 @@
         return url.href;
     }
 
+    function svgPreviewSource(pageUrl, imageUrl) {
+        const page = githubFile(pageUrl);
+        if (!page || !isSvg(pageUrl)) return null;
+        let image = githubFile(imageUrl);
+        if (!image) {
+            try {
+                const url = new URL(imageUrl);
+                if (url.origin !== 'https://raw.githubusercontent.com') return null;
+                const [owner, repo, ...tail] = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+                image = { owner, repo, tail: tail.join('/') };
+            } catch { return null; }
+        }
+        const normalize = tail => tail.replace(/^refs\/(?:heads|tags)\//, '');
+        return image.owner?.toLowerCase() === page.owner.toLowerCase()
+            && image.repo?.toLowerCase() === page.repo.toLowerCase()
+            && normalize(image.tail) === normalize(page.tail) ? page.url.href : null;
+    }
+
+    function svgFrameSource(pageUrl, frameUrl) {
+        const page = githubFile(pageUrl);
+        if (!page || !isSvg(pageUrl)) return null;
+        try {
+            const frame = new URL(frameUrl);
+            const path = frame.searchParams.get('path');
+            return frame.origin === 'https://viewscreen.githubusercontent.com' && frame.pathname === '/view/svg'
+                && frame.searchParams.get('nwo')?.toLowerCase() === `${page.owner}/${page.repo}`.toLowerCase()
+                && path && page.tail.endsWith(`/${path}`) ? page.url.href : null;
+        } catch { return null; }
+    }
+
     function fittedSize(width, height, availableWidth, availableHeight, zoom = 1) {
         if (![width, height, availableWidth, availableHeight, zoom].every(n => Number.isFinite(n) && n > 0)) {
             throw new Error('SVG and viewport dimensions must be positive.');
@@ -87,16 +117,93 @@
 
     // The same URL and sizing logic can be checked with Node's built-in test runner.
     if (typeof window === 'undefined') {
-        if (typeof module !== 'undefined') module.exports = { githubFile, branchContext, resolveLink, isSvg, rawUrl, fittedSize };
+        if (typeof module !== 'undefined') module.exports = { githubFile, branchContext, resolveLink, isSvg, rawUrl, svgPreviewSource, svgFrameSource, fittedSize };
         return;
     }
     if (location.hostname !== 'github.com' || window.top !== window.self) return;
     window[INSTANCE]?.destroy();
 
     let modal = null;
+    const previewHints = new Map();
+    const framePreviews = new Map();
+
+    function previewSource(image) {
+        for (const source of [image.currentSrc, image.src, image.getAttribute('data-canonical-src')]) {
+            if (!source) continue;
+            try {
+                const match = svgPreviewSource(location.href, new URL(source, location.href).href);
+                if (match) return match;
+            } catch { /* A malformed image URL is not the file preview. */ }
+        }
+        return null;
+    }
+
+    function restorePreview(image, original) {
+        for (const [name, value] of Object.entries(original.attributes)) {
+            if (value === null) image.removeAttribute(name);
+            else image.setAttribute(name, value);
+        }
+        if (original.cursor) image.style.setProperty('cursor', original.cursor, original.priority);
+        else image.style.removeProperty('cursor');
+        previewHints.delete(image);
+    }
+
+    function removeFramePreview(frame, preview) {
+        preview.button.remove();
+        if (preview.changedPosition && preview.parent.style.position === 'relative') {
+            if (preview.position) preview.parent.style.setProperty('position', preview.position, preview.priority);
+            else preview.parent.style.removeProperty('position');
+        }
+        framePreviews.delete(frame);
+    }
+
+    function refreshPreviews() {
+        for (const [image, original] of previewHints) {
+            if (!image.isConnected || !previewSource(image)) restorePreview(image, original);
+        }
+        for (const [frame, preview] of framePreviews) {
+            if (!frame.isConnected || !preview.button.isConnected || frame.parentElement !== preview.parent
+                    || !svgFrameSource(location.href, frame.src)) removeFramePreview(frame, preview);
+        }
+        if (!isSvg(location.href)) return;
+        for (const frame of document.querySelectorAll('iframe[src]')) {
+            if (framePreviews.has(frame) || !svgFrameSource(location.href, frame.src)) continue;
+            const parent = frame.parentElement;
+            const button = element('button', { type: 'button', 'aria-label': 'Open interactive SVG',
+                title: 'Open interactive SVG', 'data-github-svg-preview': '' });
+            const preview = { parent, button, changedPosition: getComputedStyle(parent).position === 'static',
+                position: parent.style.getPropertyValue('position'), priority: parent.style.getPropertyPriority('position') };
+            if (preview.changedPosition) parent.style.setProperty('position', 'relative');
+            button.style.cssText = 'position:absolute;inset:0;display:block;width:100%;height:100%;min-width:0;min-height:0;'
+                + 'padding:0;margin:0;border:0;border-radius:0;background:transparent;box-shadow:none;z-index:1;cursor:zoom-in';
+            button.addEventListener('focus', () => { button.style.outline = '2px solid #0969da'; });
+            button.addEventListener('blur', () => { button.style.outline = ''; });
+            button.addEventListener('click', event => {
+                if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+                const source = svgFrameSource(location.href, frame.src);
+                if (!source) return;
+                event.preventDefault();
+                event.stopPropagation();
+                openSvg(source, currentContext());
+            });
+            framePreviews.set(frame, preview);
+            parent.append(button);
+        }
+        for (const image of document.images) {
+            if (previewHints.has(image) || image.closest('a,button') || !previewSource(image)) continue;
+            previewHints.set(image, { attributes: Object.fromEntries(['role', 'tabindex', 'title', 'aria-label']
+                .map(name => [name, image.getAttribute(name)])),
+            cursor: image.style.getPropertyValue('cursor'), priority: image.style.getPropertyPriority('cursor') });
+            image.setAttribute('role', 'button');
+            image.setAttribute('tabindex', '0');
+            image.setAttribute('title', 'Open interactive SVG');
+            image.setAttribute('aria-label', 'Open interactive SVG');
+            image.style.setProperty('cursor', 'zoom-in');
+        }
+    }
 
     function currentContext() {
-        const picker = document.querySelector('#ref-picker-repos-header-ref-selector, #branch-picker-repos-header-ref-selector');
+        const picker = document.querySelector('[id^="ref-picker-repos-header-ref-selector"], [id^="branch-picker-repos-header-ref-selector"]');
         const ref = picker?.textContent.trim();
         const context = branchContext(location.href, ref);
         if (context) return context;
@@ -106,6 +213,14 @@
                 const result = branchContext(location.href, data.payload?.refInfo?.name || data.refInfo?.name);
                 if (result) return result;
             } catch { /* Other embedded payloads are unrelated to the file view. */ }
+        }
+        // The renderer supplies the exact file path, disambiguating refs containing slashes.
+        for (const frame of document.querySelectorAll('iframe[src]')) {
+            if (!svgFrameSource(location.href, frame.src)) continue;
+            const path = new URL(frame.src).searchParams.get('path');
+            const ref = githubFile(location.href).tail.slice(0, -path.length - 1).replace(/^refs\/(?:heads|tags)\//, '');
+            const result = branchContext(location.href, ref);
+            if (result?.path === path) return result;
         }
         // No guessed first path segment: refs may themselves contain slashes.
         return null;
@@ -365,19 +480,40 @@
         if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
         if (modal && event.composedPath().includes(modal.host)) return;
         const anchor = event.composedPath().find(node => node instanceof HTMLAnchorElement);
-        if (!anchor || !isSvg(anchor.href)) return;
+        const image = event.composedPath().find(node => node instanceof HTMLImageElement) || anchor?.querySelector('img');
+        const source = anchor && isSvg(anchor.href) ? anchor.href : image && previewSource(image);
+        if (!source) return;
         event.preventDefault();
         event.stopPropagation();
-        openSvg(anchor.href, currentContext());
+        openSvg(source, currentContext());
     }
 
-    const onNavigation = () => closeModal();
+    function onKeydown(event) {
+        if (!['Enter', ' '].includes(event.key) || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey
+                || !(event.target instanceof HTMLImageElement)) return;
+        const source = previewSource(event.target);
+        if (!source) return;
+        event.preventDefault();
+        event.stopPropagation();
+        openSvg(source, currentContext());
+    }
+
+    const onNavigation = () => { closeModal(); refreshPreviews(); };
+    const previewObserver = new MutationObserver(refreshPreviews);
+    previewObserver.observe(document, { childList: true, subtree: true,
+        attributes: true, attributeFilter: ['src', 'data-canonical-src'] });
+    refreshPreviews();
     document.addEventListener('click', onClick, true);
+    document.addEventListener('keydown', onKeydown, true);
     document.addEventListener('turbo:before-render', onNavigation);
     window.addEventListener('popstate', onNavigation);
     window[INSTANCE] = { destroy() {
         closeModal();
+        previewObserver.disconnect();
+        for (const [image, original] of previewHints) restorePreview(image, original);
+        for (const [frame, preview] of framePreviews) removeFramePreview(frame, preview);
         document.removeEventListener('click', onClick, true);
+        document.removeEventListener('keydown', onKeydown, true);
         document.removeEventListener('turbo:before-render', onNavigation);
         window.removeEventListener('popstate', onNavigation);
         delete window[INSTANCE];

@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { githubFile, branchContext, resolveLink, isSvg, rawUrl, fittedSize } = require('../github-svg-modal.user.js');
+const { githubFile, branchContext, resolveLink, isSvg, rawUrl, svgPreviewSource, svgFrameSource, fittedSize } = require('../github-svg-modal.user.js');
 
 const source = 'https://github.com/example/graphs/blob/d5/assets/flow.svg';
 const context = { owner: 'example', repo: 'graphs', ref: 'd5' };
@@ -63,4 +63,33 @@ test('fit uses the stricter dimension without altering aspect ratio', () => {
     assert.deepEqual(fittedSize(1000, 2000, 1000, 800), { width: 400, height: 800 });
     assert.deepEqual(fittedSize(2000, 1000, 1000, 800, 1.25), { width: 1250, height: 625 });
     assert.throws(() => fittedSize(0, 100, 1000, 800));
+});
+
+test('direct SVG previews recognize the file image across GitHub raw URL formats', () => {
+    const page = 'https://github.com/example/graphs/blob/d5/.private_resources/diagrams/workflows/planning/flow.svg';
+    const path = '.private_resources/diagrams/workflows/planning/flow.svg';
+    for (const image of [
+        `https://github.com/example/graphs/raw/d5/${path}`,
+        `https://github.com/example/graphs/raw/refs/heads/d5/${path}`,
+        `https://raw.githubusercontent.com/example/graphs/refs/heads/d5/${path}?token=temporary`,
+    ]) assert.equal(svgPreviewSource(page, image), page);
+    assert.equal(svgPreviewSource(page, 'https://avatars.githubusercontent.com/u/123'), null);
+    assert.equal(svgPreviewSource(page, `https://github.com/example/other/raw/d5/${path}`), null);
+    assert.equal(svgPreviewSource(page, `https://github.com/example/graphs/raw/main/${path}`), null);
+    assert.equal(svgPreviewSource(page, 'https://github.com/example/graphs/raw/d5/other.svg'), null);
+    assert.equal(svgPreviewSource(page.replace('.svg', '.md.html'), page), null);
+    assert.equal(svgPreviewSource(page, 'not a URL'), null);
+});
+
+test('GitHub cross-origin SVG renderer frames are matched to their repository and path', () => {
+    const page = 'https://github.com/example/graphs/blob/feature%2Fflow/.private_resources/diagrams/planning/flow.svg';
+    const frame = new URL('https://viewscreen.githubusercontent.com/view/svg');
+    frame.searchParams.set('nwo', 'example/graphs');
+    frame.searchParams.set('path', '.private_resources/diagrams/planning/flow.svg');
+    assert.equal(svgFrameSource(page, frame.href), page);
+    assert.equal(svgFrameSource(page, frame.href.replace('viewscreen.githubusercontent.com', 'example.org')), null);
+    assert.equal(svgFrameSource(page, frame.href.replace('example%2Fgraphs', 'example%2Fother')), null);
+    frame.searchParams.set('path', 'other.svg');
+    assert.equal(svgFrameSource(page, frame.href), null);
+    assert.equal(svgFrameSource(page.replace('.svg', '.md.html'), frame.href), null);
 });

@@ -5,6 +5,10 @@ const path = require('node:path');
 
 const pageUrl = 'https://github.com/example/graphs/blob/feature/diagrams/flow.md.html';
 const svgUrl = 'https://github.com/example/graphs/blob/feature%2Fdiagrams/assets/flow.svg';
+const directSvgUrl = 'https://github.com/example/graphs/blob/feature%2Fdiagrams/.private_resources/diagrams/workflows/components/planning/flow.svg';
+const directRawUrl = directSvgUrl.replace('/blob/', '/raw/refs/heads/');
+const framePageUrl = `${directSvgUrl}?preview=frame`;
+const frameUrl = 'https://viewscreen.githubusercontent.com/view/svg?nwo=example%2Fgraphs&path=.private_resources%2Fdiagrams%2Fworkflows%2Fcomponents%2Fplanning%2Fflow.svg';
 const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
     viewBox="0 0 1200 600" onload="window.svgExecuted=true">
     <script>window.svgExecuted=true</script>
@@ -33,10 +37,21 @@ async function run(browser) {
         if (url === pageUrl || url === svgUrl) {
             await route.fulfill({ contentType: 'text/html', body: `<button id="ref-picker-repos-header-ref-selector">feature/diagrams</button>
                 <main class="markdown-body"><a id="diagram" href="${svgUrl}">Diagram</a></main>` });
-        } else if (url === svgUrl.replace('/blob/', '/raw/')) {
+        } else if (url === framePageUrl) {
+            await route.fulfill({ contentType: 'text/html', body: `<button id="ref-picker-repos-header-ref-selector-wide">feature/diagrams</button>
+                <div id="renderer" style="width:100%;height:210px"><iframe title="File display" src="${frameUrl}" style="width:100%;height:210px;border:0"></iframe></div>` });
+        } else if (url === frameUrl) {
+            await route.fulfill({ contentType: 'text/html', body: '<p>Cross-origin SVG renderer</p>' });
+        } else if (url === directSvgUrl) {
+            await route.fulfill({ contentType: 'text/html', body: `<button id="ref-picker-repos-header-ref-selector">feature/diagrams</button>
+                <img id="avatar" alt="Avatar" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==">
+                <div><img id="file-preview" alt="flow.svg" title="Original preview" role="img" tabindex="7" style="cursor:crosshair" src="${directRawUrl}"></div>` });
+        } else if (url === svgUrl.replace('/blob/', '/raw/') || url === directRawUrl || url === directSvgUrl.replace('/blob/', '/raw/')) {
             rawRequests += 1;
             if (delayResponse) await new Promise(resolve => setTimeout(resolve, 100));
-            await route.fulfill(failResponse ? { status: 403, body: 'Denied' } : { contentType: 'image/svg+xml', body: svg });
+            const body = route.request().resourceType() === 'image'
+                ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600"><rect width="1200" height="600" fill="white"/></svg>' : svg;
+            await route.fulfill(failResponse ? { status: 403, body: 'Denied' } : { contentType: 'image/svg+xml', body });
         } else if (url === 'https://github.com/example/graphs/blob/feature%2Fdiagrams/workflows/plan.md.html') {
             await route.fulfill({ contentType: 'text/html', body: '<h1>Plan</h1><h2 id="review">Review</h2>' });
         } else {
@@ -123,9 +138,68 @@ async function run(browser) {
         await page.waitForURL('**/feature%2Fdiagrams/workflows/plan.md.html#review');
         assert.equal(await page.locator('#review').textContent(), 'Review');
         assert.equal(await page.locator('#github-svg-modal').count(), 0);
+        await page.goto(directSvgUrl);
+        const preview = page.getByRole('button', { name: 'Open interactive SVG', exact: true });
+        await preview.click();
+        await page.locator('#github-svg-modal svg').waitFor({ state: 'visible' });
+        assert.equal(await page.locator('#github-svg-modal a').filter({ hasText: 'Plan' }).getAttribute('href'),
+            'https://github.com/example/graphs/blob/feature%2Fdiagrams/workflows/plan.md.html#review');
+        await page.keyboard.press('Escape');
+        for (const key of ['Enter', 'Space']) {
+            await preview.press(key);
+            await page.locator('#github-svg-modal svg').waitFor({ state: 'visible' });
+            await page.keyboard.press('Escape');
+        }
+        await page.locator('#avatar').click();
+        assert.equal(await page.locator('#github-svg-modal').count(), 0, 'unrelated images are left alone');
+        await page.goto(framePageUrl);
+        const frameOpener = page.getByRole('button', { name: 'Open interactive SVG', exact: true });
+        await frameOpener.waitFor();
+        const bounds = await page.evaluate(() => {
+            const frame = document.querySelector('iframe').getBoundingClientRect();
+            const button = document.querySelector('[data-github-svg-preview]').getBoundingClientRect();
+            return { frame: { x: frame.x, y: frame.y, width: frame.width, height: frame.height },
+                button: { x: button.x, y: button.y, width: button.width, height: button.height } };
+        });
+        assert.deepEqual(bounds.button, bounds.frame);
+        await frameOpener.click();
+        await page.locator('#github-svg-modal svg').waitFor({ state: 'visible' });
+        assert.equal(await page.locator('#github-svg-modal a').filter({ hasText: 'Plan' }).getAttribute('href'),
+            'https://github.com/example/graphs/blob/feature%2Fdiagrams/workflows/plan.md.html#review');
+        await page.keyboard.press('Escape');
+        await page.locator('#ref-picker-repos-header-ref-selector-wide').evaluate(button => button.remove());
+        await frameOpener.press('Enter');
+        await page.locator('#github-svg-modal svg').waitFor({ state: 'visible' });
+        assert.equal(await page.locator('#github-svg-modal a').filter({ hasText: 'Plan' }).getAttribute('href'),
+            'https://github.com/example/graphs/blob/feature%2Fdiagrams/workflows/plan.md.html#review');
+        await page.keyboard.press('Escape');
+        await page.evaluate(() => window.__gorbanGithubSvgModal.destroy());
+        assert.equal(await frameOpener.count(), 0);
+        assert.equal(await page.locator('#renderer').evaluate(node => node.style.position), '');
+        await page.goto(pageUrl);
+        await page.evaluate(({ directSvgUrl, directRawUrl }) => {
+            history.pushState({}, '', directSvgUrl);
+            const picker = document.createElement('button');
+            picker.id = 'ref-picker-repos-header-ref-selector';
+            picker.textContent = 'feature/diagrams';
+            const image = document.createElement('img');
+            image.id = 'file-preview';
+            image.src = directRawUrl;
+            image.title = 'Original preview';
+            image.style.cursor = 'crosshair';
+            document.body.replaceChildren(picker, image);
+        }, { directSvgUrl, directRawUrl });
+        await page.getByRole('button', { name: 'Open interactive SVG', exact: true }).click();
+        await page.locator('#github-svg-modal svg').waitFor({ state: 'visible' });
+        await page.keyboard.press('Escape');
+        await page.evaluate(() => window.__gorbanGithubSvgModal.destroy());
+        assert.equal(await page.locator('#file-preview').getAttribute('role'), null);
+        assert.equal(await page.locator('#file-preview').getAttribute('tabindex'), null);
+        assert.equal(await page.locator('#file-preview').getAttribute('title'), 'Original preview');
+        assert.equal(await page.locator('#file-preview').evaluate(image => image.style.cursor), 'crosshair');
         assert.deepEqual(unexpectedRequests, []);
         assert.ok(rawRequests >= 5);
-        return 'Browser checks passed: fitting, resize, zoom/reset, three close gestures, aborted-load cleanup, sanitized SVG and branch-aware navigation.';
+        return 'Browser checks passed: fitting, zoom, closing, cleanup, safe SVGs, branch links, direct image/iframe preview clicks and keyboard, renderer-derived refs and SPA navigation.';
     } finally { await context.close(); }
 }
 
