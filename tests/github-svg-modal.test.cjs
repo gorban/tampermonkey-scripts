@@ -18,6 +18,14 @@ test('branch names containing slashes or spaces remain a single ref', () => {
         'workflows/flow.md.html');
 });
 
+test('placeholder links recorded by an upstream owner stay in the fork being viewed', () => {
+    const upstream = placeholder.replace('/example/', '/upstream-owner/');
+    assert.equal(resolveLink(upstream, source, { ...context, ref: 'feature/fork-only' }),
+        'https://github.com/example/graphs/blob/feature%2Ffork-only/workflows/flow.md.html#plan');
+    assert.equal(resolveLink(upstream.replace('/graphs/', '/Graphs/'), source, context),
+        'https://github.com/example/graphs/blob/d5/workflows/flow.md.html#plan');
+});
+
 test('external source revisions and other repositories are not rewritten', () => {
     const external = 'https://github.com/example/library/blob/abc123/source.py#L12';
     assert.equal(resolveLink(external, source, context), external);

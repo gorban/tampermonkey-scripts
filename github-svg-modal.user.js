@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GitHub SVG Modal
 // @namespace    https://github.com/gorban
-// @version      0.1.2
+// @version      0.1.3
 // @description  Open linked SVGs in a fitted, zoomable modal with branch-aware navigation.
 // @author       gorban
 // @match        https://github.com/*
@@ -52,8 +52,9 @@
         try { url = new URL(value, source); } catch { return null; }
         if (!['https:', 'http:', 'mailto:'].includes(url.protocol)) return null;
         const file = githubFile(url.href);
-        if (file && context && file.owner.toLowerCase() === context.owner.toLowerCase()
-                && file.repo.toLowerCase() === context.repo.toLowerCase()
+        // A fork shares the recorded upstream owner in its diagrams; a same-named
+        // repository under any owner resolves to the repository being viewed.
+        if (file && context && file.repo.toLowerCase() === context.repo.toLowerCase()
                 && file.tail.startsWith(`${PLACEHOLDER}/`)) {
             const path = file.tail.slice(PLACEHOLDER.length + 1).split('/').map(encodeURIComponent).join('/');
             url.pathname = `/${encodeURIComponent(context.owner)}/${encodeURIComponent(context.repo)}`
