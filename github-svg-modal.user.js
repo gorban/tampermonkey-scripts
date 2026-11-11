@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GitHub SVG Modal
 // @namespace    https://github.com/gorban
-// @version      0.1.3
+// @version      0.1.4
 // @description  Open linked SVGs in a fitted, zoomable modal with branch-aware navigation.
 // @author       gorban
 // @match        https://github.com/*
@@ -116,9 +116,62 @@
         return { width: width * scale, height: height * scale };
     }
 
+    // Workflow diagrams link to headings and table rows that the rendered .md.html
+    // viewer gives element IDs; GitHub's code view only has line anchors.
+    const FRAGMENT = /^(?:node-([a-z][a-z0-9_]*)|workflow-tools?-(graph|component|node)-([a-z][a-z0-9_]*))$/;
+
+    function fragmentLine(text, fragment) {
+        let node = null, kind = null, scope = null, port = null;
+        const row = fragment.match(/^workflow-tool-(graph|component|node)-([a-z][a-z0-9_]*)-([A-Za-z_][A-Za-z0-9_]*)$/);
+        if (row) [, kind, scope, port] = row;
+        else {
+            const match = fragment.match(FRAGMENT);
+            if (!match || fragment.startsWith('workflow-tool-')) return null;
+            [, node, kind, scope] = match;
+        }
+        const lines = text.split('\n');
+        const index = pattern => lines.findIndex(line => pattern.test(line));
+        if (node) {
+            const at = index(new RegExp(`^#{1,2} Node: ${node}\\s*$`));
+            return at < 0 ? null : at + 1;
+        }
+        let heading = -1;
+        const section = kind === 'node' ? index(new RegExp(`^## Node: ${scope}\\s*$`)) : -1;
+        if (section >= 0) {
+            const end = lines.findIndex((line, at) => at > section && /^## /.test(line));
+            heading = lines.findIndex((line, at) => at > section && (end < 0 || at < end) && /^### Tools\s*$/.test(line));
+        } else if (kind !== 'node' || index(new RegExp(`^# Node: ${scope}\\s*$`)) >= 0) {
+            const firstNode = index(/^## Node: /);
+            heading = lines.findIndex((line, at) => (firstNode < 0 || at < firstNode) && /^## Tools\s*$/.test(line));
+        }
+        if (heading < 0) return null;
+        if (!port) return heading + 1;
+        for (let at = heading + 1; at < lines.length && !/^#/.test(lines[at]); at++) {
+            if (new RegExp(`^\\|\\s*${port}\\s*\\|`).test(lines[at])) return at + 1;
+        }
+        return null;
+    }
+
+    function rawFileUrl(value) {
+        const file = githubFile(value);
+        if (!file) throw new Error('Expected a GitHub file link.');
+        const url = new URL(file.url);
+        url.pathname = url.pathname.replace(/^\/([^/]+)\/([^/]+)\/blob\//, '/$1/$2/raw/');
+        url.hash = '';
+        url.search = '';
+        return url.href;
+    }
+
+    function declarationFragment(value) {
+        const file = githubFile(value);
+        if (!file || file.kind !== 'blob' || !/\.md\.html$/i.test(file.tail)) return null;
+        const fragment = decodeURIComponent(file.url.hash.slice(1));
+        return /^(?:node-|workflow-tools?-)/.test(fragment) ? fragment : null;
+    }
+
     // The same URL and sizing logic can be checked with Node's built-in test runner.
     if (typeof window === 'undefined') {
-        if (typeof module !== 'undefined') module.exports = { githubFile, branchContext, resolveLink, isSvg, rawUrl, svgPreviewSource, svgFrameSource, fittedSize };
+        if (typeof module !== 'undefined') module.exports = { githubFile, branchContext, resolveLink, isSvg, rawUrl, svgPreviewSource, svgFrameSource, fittedSize, fragmentLine, declarationFragment };
         return;
     }
     if (location.hostname !== 'github.com' || window.top !== window.self) return;
@@ -461,7 +514,7 @@
                     if (target) { target.scrollIntoView({ block: 'center', inline: 'center' }); return; }
                 }
                 if (isSvg(href)) openSvg(href, context);
-                else { closeModal(); location.assign(href); }
+                else { closeModal(); navigateToDeclaration(href); }
             });
             state.drawing.append(svg);
             state.dimensions = { width, height };
@@ -475,6 +528,28 @@
             state.message.textContent = controller.signal.aborted ? 'SVG loading timed out.' : error.message;
             state.message.append(element('a', { href: url }, 'Open file on GitHub'));
         } finally { clearTimeout(timeout); }
+    }
+
+    async function declarationLineUrl(href) {
+        const fragment = declarationFragment(href);
+        if (!fragment) return href;
+        try {
+            const response = await fetch(rawFileUrl(href), { credentials: 'same-origin' });
+            const line = response.ok ? fragmentLine(await response.text(), fragment) : null;
+            if (!line) return href;
+            const url = new URL(href);
+            url.hash = `L${line}`;
+            return url.href;
+        } catch { return href; }
+    }
+
+    async function navigateToDeclaration(href) {
+        location.assign(await declarationLineUrl(href));
+    }
+
+    async function retargetCurrentDeclaration() {
+        const target = await declarationLineUrl(location.href);
+        if (target !== location.href) location.replace(target);
     }
 
     function onClick(event) {
@@ -508,6 +583,9 @@
     document.addEventListener('keydown', onKeydown, true);
     document.addEventListener('turbo:before-render', onNavigation);
     window.addEventListener('popstate', onNavigation);
+    document.addEventListener('turbo:load', retargetCurrentDeclaration);
+    window.addEventListener('hashchange', retargetCurrentDeclaration);
+    retargetCurrentDeclaration();
     window[INSTANCE] = { destroy() {
         closeModal();
         previewObserver.disconnect();
@@ -517,6 +595,8 @@
         document.removeEventListener('keydown', onKeydown, true);
         document.removeEventListener('turbo:before-render', onNavigation);
         window.removeEventListener('popstate', onNavigation);
+        document.removeEventListener('turbo:load', retargetCurrentDeclaration);
+        window.removeEventListener('hashchange', retargetCurrentDeclaration);
         delete window[INSTANCE];
     } };
 })();

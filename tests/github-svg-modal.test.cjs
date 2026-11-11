@@ -101,3 +101,62 @@ test('GitHub cross-origin SVG renderer frames are matched to their repository an
     assert.equal(svgFrameSource(page, frame.href), null);
     assert.equal(svgFrameSource(page.replace('.svg', '.md.html'), frame.href), null);
 });
+
+const { fragmentLine } = require('../github-svg-modal.user.js');
+const declaration = [
+    '# Workflow',                                  // 1
+    '',                                            // 2
+    '## Tools',                                    // 3
+    '',                                            // 4
+    '| Port | Instance |',                         // 5
+    '| --- | --- |',                               // 6
+    '| primary | [primary](cfg/tools/primary.toml) |', // 7
+    '',                                            // 8
+    '## Node: plan',                               // 9
+    '',                                            // 10
+    '### Tools',                                   // 11
+    '',                                            // 12
+    '| Port | Instance | Operations |',            // 13
+    '| --- | --- | --- |',                         // 14
+    '| lookup | [primary](cfg/tools/primary.toml) | query |', // 15
+    '',                                            // 16
+    '## Node: render',                             // 17
+].join('\n');
+
+test('diagram fragments map to the declaration source line GitHub can highlight', () => {
+    assert.equal(fragmentLine(declaration, 'workflow-tools-graph-demo'), 3);
+    assert.equal(fragmentLine(declaration, 'workflow-tool-graph-demo-primary'), 7);
+    assert.equal(fragmentLine(declaration, 'node-plan'), 9);
+    assert.equal(fragmentLine(declaration, 'workflow-tools-node-plan'), 11);
+    assert.equal(fragmentLine(declaration, 'workflow-tool-node-plan-lookup'), 15);
+    assert.equal(fragmentLine(declaration, 'node-render'), 17);
+});
+
+test('standalone component and node documents use their own Tools heading', () => {
+    const component = '# Component: draft\n\n## Flow\n\n1.  [node plan](plan.md.html)\n\n## Tools\n\n| Port | Instance |\n| --- | --- |\n| primary | [p](p.toml) |\n';
+    assert.equal(fragmentLine(component, 'workflow-tools-component-draft'), 7);
+    assert.equal(fragmentLine(component, 'workflow-tool-component-draft-primary'), 11);
+    const node = '# Node: plan\n\n## Native\n\n## Tools\n\n| Port | Instance | Operations |\n| --- | --- | --- |\n| lookup | [p](p.toml) | query |\n';
+    assert.equal(fragmentLine(node, 'workflow-tools-node-plan'), 5);
+    assert.equal(fragmentLine(node, 'workflow-tool-node-plan-lookup'), 9);
+    assert.equal(fragmentLine(node, 'node-plan'), 1);
+});
+
+test('unknown, malformed and line fragments are left alone', () => {
+    for (const fragment of ['L12', 'plan', 'node-missing', 'workflow-tool-node-plan-missing',
+        'workflow-tools-node-render', 'workflow-tools-other-plan', 'workflow-tool-graph-demo-']) {
+        assert.equal(fragmentLine(declaration, fragment), null, fragment);
+    }
+});
+
+test('only declaration blobs with diagram fragments are retargeted', () => {
+    const { declarationFragment } = require('../github-svg-modal.user.js');
+    const blob = 'https://github.com/example/graphs/blob/d5/demo/flow.md.html';
+    assert.equal(declarationFragment(blob + '#workflow-tools-graph-demo'), 'workflow-tools-graph-demo');
+    assert.equal(declarationFragment(blob + '#workflow-tool-node-plan-lookup'), 'workflow-tool-node-plan-lookup');
+    assert.equal(declarationFragment(blob + '#node-plan'), 'node-plan');
+    for (const other of [blob + '#L12', blob, blob.replace('/blob/', '/raw/') + '#node-plan',
+        'https://github.com/example/graphs/blob/d5/README.md#node-plan', 'https://example.org/flow.md.html#node-plan']) {
+        assert.equal(declarationFragment(other), null, other);
+    }
+});

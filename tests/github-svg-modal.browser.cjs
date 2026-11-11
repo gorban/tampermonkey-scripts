@@ -21,6 +21,9 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.
     <a xlink:href="https://github.com/example/graphs/blob/_____switch_branch_____/workflows/plan.md.html#review">
         <text x="40" y="80" class="node">Plan</text>
     </a>
+    <a xlink:href="https://github.com/example/graphs/blob/_____switch_branch_____/workflows/plan.md.html#workflow-tools-graph-plan">
+        <text x="40" y="200" class="node">Tools</text>
+    </a>
     <a href="javascript:alert(1)"><text x="40" y="120">Unsafe</text></a>
     <a href="https://github.com/example/library/blob/abc123/type.py#L8"><text x="40" y="160">Source</text></a>
 </svg>`;
@@ -52,6 +55,8 @@ async function run(browser) {
             const body = route.request().resourceType() === 'image'
                 ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600"><rect width="1200" height="600" fill="white"/></svg>' : svg;
             await route.fulfill(failResponse ? { status: 403, body: 'Denied' } : { contentType: 'image/svg+xml', body });
+        } else if (url === 'https://github.com/example/graphs/raw/feature%2Fdiagrams/workflows/plan.md.html') {
+            await route.fulfill({ contentType: 'text/plain', body: '# Workflow\n\n## Tools\n\n| Port | Instance |\n' });
         } else if (url === 'https://github.com/example/graphs/blob/feature%2Fdiagrams/workflows/plan.md.html') {
             await route.fulfill({ contentType: 'text/html', body: '<h1>Plan</h1><h2 id="review">Review</h2>' });
         } else {
@@ -138,6 +143,11 @@ async function run(browser) {
         await page.waitForURL('**/feature%2Fdiagrams/workflows/plan.md.html#review');
         assert.equal(await page.locator('#review').textContent(), 'Review');
         assert.equal(await page.locator('#github-svg-modal').count(), 0);
+        await page.goto(pageUrl);
+        await open();
+        await page.locator('#github-svg-modal a').filter({ hasText: 'Tools' }).click();
+        await page.waitForURL('**/feature%2Fdiagrams/workflows/plan.md.html#L3');
+        assert.equal(await page.locator('#github-svg-modal').count(), 0);
         await page.goto(directSvgUrl);
         const preview = page.getByRole('button', { name: 'Open interactive SVG', exact: true });
         await preview.click();
@@ -199,7 +209,7 @@ async function run(browser) {
         assert.equal(await page.locator('#file-preview').evaluate(image => image.style.cursor), 'crosshair');
         assert.deepEqual(unexpectedRequests, []);
         assert.ok(rawRequests >= 5);
-        return 'Browser checks passed: fitting, zoom, closing, cleanup, safe SVGs, branch links, direct image/iframe preview clicks and keyboard, renderer-derived refs and SPA navigation.';
+        return 'Browser checks passed: fitting, zoom, closing, cleanup, safe SVGs, branch links, direct image/iframe preview clicks and keyboard, renderer-derived refs, SPA navigation and declaration fragments resolved to source lines.';
     } finally { await context.close(); }
 }
 
