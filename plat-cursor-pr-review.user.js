@@ -18,7 +18,7 @@
     window.__cursorPrReviewLoaded = true;
 
     const SLACK_WEBHOOK_URL =
-        'https://hooks.slack.com/triggers/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';
+        'https://hooks.slack.com/triggers/E0311HDV9TL/<secret_omitted>/<secret_omitted>';
     const ORG_ID = 'E0311HDV9TL';
     // https://upload.wikimedia.org/wikipedia/en/d/dc/Perry_the_Platypus.png
     const PERRY_IMG_DATA_URI =
