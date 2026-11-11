@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GitHub SVG Modal
 // @namespace    https://github.com/gorban
-// @version      0.1.4
+// @version      0.1.5
 // @description  Open linked SVGs in a fitted, zoomable modal with branch-aware navigation.
 // @author       gorban
 // @match        https://github.com/*
@@ -129,7 +129,8 @@
             if (!match || fragment.startsWith('workflow-tool-')) return null;
             [, node, kind, scope] = match;
         }
-        const lines = text.split('\n');
+        const fenced = fencedLines(text);
+        const lines = text.split('\n').map((line, at) => fenced.has(at) ? '' : line);
         const index = pattern => lines.findIndex(line => pattern.test(line));
         if (node) {
             const at = index(new RegExp(`^#{1,2} Node: ${node}\\s*$`));
@@ -148,6 +149,42 @@
         if (!port) return heading + 1;
         for (let at = heading + 1; at < lines.length && !/^#/.test(lines[at]); at++) {
             if (new RegExp(`^\\|\\s*${port}\\s*\\|`).test(lines[at])) return at + 1;
+        }
+        return null;
+    }
+
+    function fencedLines(text) {
+        const fenced = new Set();
+        let fence = null;
+        text.split('\n').forEach((line, at) => {
+            const marker = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+            if (fence) {
+                fenced.add(at);
+                if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length) fence = null;
+            } else if (marker) {
+                fence = marker[1];
+                fenced.add(at);
+            }
+        });
+        return fenced;
+    }
+
+    // GitHub's rendered Markdown anchors: lowercase, punctuation other than - and _
+    // removed, spaces to hyphens, and repeated headings numbered in document order.
+    function fragmentTarget(text, fragment) {
+        const line = fragmentLine(text, fragment);
+        if (!line) return null;
+        if (fragment.startsWith('workflow-tool-')) return { hash: `L${line}`, plain: true };
+        const fenced = fencedLines(text);
+        const seen = new Map();
+        const lines = text.split('\n');
+        for (let at = 0; at < lines.length; at++) {
+            const heading = !fenced.has(at) && lines[at].match(/^#{1,6}\s+(.*?)\s*#*\s*$/);
+            if (!heading) continue;
+            const base = heading[1].toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').trim().replace(/\s/g, '-');
+            const count = seen.get(base) || 0;
+            seen.set(base, count + 1);
+            if (at + 1 === line) return { hash: count ? `${base}-${count}` : base, plain: false };
         }
         return null;
     }
@@ -171,7 +208,7 @@
 
     // The same URL and sizing logic can be checked with Node's built-in test runner.
     if (typeof window === 'undefined') {
-        if (typeof module !== 'undefined') module.exports = { githubFile, branchContext, resolveLink, isSvg, rawUrl, svgPreviewSource, svgFrameSource, fittedSize, fragmentLine, declarationFragment };
+        if (typeof module !== 'undefined') module.exports = { githubFile, branchContext, resolveLink, isSvg, rawUrl, svgPreviewSource, svgFrameSource, fittedSize, fragmentLine, fragmentTarget, declarationFragment };
         return;
     }
     if (location.hostname !== 'github.com' || window.top !== window.self) return;
@@ -535,10 +572,11 @@
         if (!fragment) return href;
         try {
             const response = await fetch(rawFileUrl(href), { credentials: 'same-origin' });
-            const line = response.ok ? fragmentLine(await response.text(), fragment) : null;
-            if (!line) return href;
+            const target = response.ok ? fragmentTarget(await response.text(), fragment) : null;
+            if (!target) return href;
             const url = new URL(href);
-            url.hash = `L${line}`;
+            if (target.plain) url.searchParams.set('plain', '1');
+            url.hash = target.hash;
             return url.href;
         } catch { return href; }
     }

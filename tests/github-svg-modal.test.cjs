@@ -160,3 +160,20 @@ test('only declaration blobs with diagram fragments are retargeted', () => {
         assert.equal(declarationFragment(other), null, other);
     }
 });
+
+test('heading fragments open the rendered heading anchor; rows open the source line', () => {
+    const { fragmentTarget } = require('../github-svg-modal.user.js');
+    assert.deepEqual(fragmentTarget(declaration, 'workflow-tools-graph-demo'), { hash: 'tools', plain: false });
+    assert.deepEqual(fragmentTarget(declaration, 'node-plan'), { hash: 'node-plan', plain: false });
+    // The node's own Tools heading repeats the graph's, so GitHub numbers it.
+    assert.deepEqual(fragmentTarget(declaration, 'workflow-tools-node-plan'), { hash: 'tools-1', plain: false });
+    assert.deepEqual(fragmentTarget(declaration, 'workflow-tool-node-plan-lookup'), { hash: 'L15', plain: true });
+    assert.equal(fragmentTarget(declaration, 'node-missing'), null);
+});
+
+test('rendered anchors ignore fenced prompt lines and follow GitHub slug rules', () => {
+    const { fragmentTarget } = require('../github-svg-modal.user.js');
+    const text = '# Node: plan\n\n### Prompt: draft\n\n```text\n## Tools\n# Not a heading\n```\n\n## Tools\n\n| Port | Instance | Operations |\n| --- | --- | --- |\n| lookup | [p](p.toml) | query |\n';
+    assert.deepEqual(fragmentTarget(text, 'workflow-tools-node-plan'), { hash: 'tools', plain: false });
+    assert.deepEqual(fragmentTarget(text, 'node-plan'), { hash: 'node-plan', plain: false });
+});
